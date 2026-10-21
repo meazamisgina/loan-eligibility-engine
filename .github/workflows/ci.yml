@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest
+      - name: Lint (ruff)
+        run: ruff check ingest/
+      - name: Unit tests (pytest)
+        run: pytest ingest/tests -q
+
+  validate-compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate docker-compose
+        run: |
+          if [ -f docker-compose.yml ]; then
+            docker compose -f docker-compose.yml config --quiet
+            echo "docker-compose.yml is valid"
+          else
+            echo "docker-compose.yml not present yet - skipping"
+          fi
