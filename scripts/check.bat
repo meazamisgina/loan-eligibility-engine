@@ -1,13 +1,15 @@
 @echo off
-REM Local pre-push check: mirrors .github/workflows/ci.yml exactly
+REM Local pre-push check: mirrors .github/workflows/ci.yml
 setlocal
 
+if exist .venv\Scripts\python.exe (set PY=.venv\Scripts\python) else (set PY=py)
+
 echo === 1/3 Lint (ruff) ===
-py -m ruff check ingest\
+%PY% -m ruff check ingest\
 if errorlevel 1 goto :fail
 
-echo === 2/3 Unit tests (pytest) ===
-py -m pytest ingest/tests -q
+echo === 2/3 Tests (pytest) ===
+%PY% -m pytest ingest/tests -q
 if errorlevel 1 goto :fail
 
 echo === 3/3 docker-compose validation ===
@@ -24,6 +26,5 @@ echo ALL CHECKS PASSED - safe to push
 exit /b 0
 
 :fail
-echo.
 echo CHECKS FAILED - do not push
 exit /b 1
