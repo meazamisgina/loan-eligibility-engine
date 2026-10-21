@@ -1,13 +1,3 @@
--- ============================================================
--- Loan Eligibility Engine — schema
--- Target: PostgreSQL 16
--- Load:   docker compose exec -i postgres psql -U USER -d DB < infrastructure\sql\schema.sql
---         (USER/DB = values from your .env; defaults: app / loan_engine)
--- Idempotent: safe to run more than once.
--- ADRs: ADR-002 (data model), ADR-003 (funnel), ADR-008 (idempotency)
--- ============================================================
-
--- ---------- 1. Ingestion audit: one row per uploaded CSV ----------
 CREATE TABLE IF NOT EXISTS ingestion_batches (
     batch_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source_filename TEXT NOT NULL,
@@ -21,7 +11,6 @@ CREATE TABLE IF NOT EXISTS ingestion_batches (
     finished_at     TIMESTAMPTZ
 );
 
--- ---------- 2. Raw landing: every row as-received ----------
 CREATE TABLE IF NOT EXISTS users_staging (
     batch_id   UUID NOT NULL REFERENCES ingestion_batches (batch_id) ON DELETE CASCADE,
     row_number INTEGER NOT NULL,
@@ -30,7 +19,6 @@ CREATE TABLE IF NOT EXISTS users_staging (
     PRIMARY KEY (batch_id, row_number)
 );
 
--- ---------- 3. Quarantine: rejected rows + the reason (never silently dropped) ----------
 CREATE TABLE IF NOT EXISTS users_rejected (
     batch_id     UUID NOT NULL REFERENCES ingestion_batches (batch_id) ON DELETE CASCADE,
     row_number   INTEGER NOT NULL,
@@ -40,7 +28,6 @@ CREATE TABLE IF NOT EXISTS users_rejected (
     PRIMARY KEY (batch_id, row_number)
 );
 
--- ---------- 4. Canonical users ----------
 CREATE TABLE IF NOT EXISTS users (
     user_id           UUID PRIMARY KEY,
     name              TEXT NOT NULL,
@@ -52,14 +39,13 @@ CREATE TABLE IF NOT EXISTS users (
     age               INTEGER NOT NULL CHECK (age BETWEEN 18 AND 120),
     batch_id          UUID REFERENCES ingestion_batches (batch_id),
     ingested_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_users_credit_score  ON users (credit_score);
-CREATE INDEX IF NOT EXISTS idx_users_income        ON users (monthly_income);
-CREATE INDEX IF NOT EXISTS idx_users_employment    ON users (employment_status);
+CREATE INDEX IF NOT EXISTS idx_users_credit_score ON users (credit_score);
+CREATE INDEX IF NOT EXISTS idx_users_income       ON users (monthly_income);
+CREATE INDEX IF NOT EXISTS idx_users_employment   ON users (employment_status);
 
--- ---------- 5. Crawl observability: one row per (source page, run) ----------
 CREATE TABLE IF NOT EXISTS crawl_runs (
     crawl_run_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source_url     TEXT NOT NULL,
@@ -74,8 +60,6 @@ CREATE TABLE IF NOT EXISTS crawl_runs (
 
 CREATE INDEX IF NOT EXISTS idx_crawl_runs_source ON crawl_runs (source_url, started_at DESC);
 
--- ---------- 6. Loan products: typed criteria for SQL + raw evidence ----------
--- NULL criteria = unconstrained (bank page didn't publish that field).
 CREATE TABLE IF NOT EXISTS loan_products (
     product_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     product_name       TEXT NOT NULL,
@@ -93,13 +77,10 @@ CREATE TABLE IF NOT EXISTS loan_products (
     first_seen_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (source_url, product_name)
-    -- NOTE: CHECKs treat NULL as passing, which is exactly the semantics we want:
-    -- a missing bound is not a violated bound (see header comment).
 );
 
 CREATE INDEX IF NOT EXISTS idx_products_credit_range ON loan_products (min_credit_score, max_credit_score);
 
--- ---------- 7. Match runs: the Treasure Hunt metrics live here ----------
 CREATE TABLE IF NOT EXISTS match_runs (
     match_run_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     status              TEXT NOT NULL DEFAULT 'running'
@@ -114,7 +95,6 @@ CREATE TABLE IF NOT EXISTS match_runs (
     finished_at         TIMESTAMPTZ
 );
 
--- ---------- 8. Matches: who matched what, and why ----------
 CREATE TABLE IF NOT EXISTS matches (
     user_id      UUID NOT NULL REFERENCES users (user_id) ON DELETE CASCADE,
     product_id   UUID NOT NULL REFERENCES loan_products (product_id) ON DELETE CASCADE,
@@ -128,7 +108,6 @@ CREATE TABLE IF NOT EXISTS matches (
 CREATE INDEX IF NOT EXISTS idx_matches_user ON matches (user_id);
 CREATE INDEX IF NOT EXISTS idx_matches_run  ON matches (match_run_id);
 
--- ---------- 9. Notification audit ----------
 CREATE TABLE IF NOT EXISTS notifications (
     notification_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id         UUID NOT NULL REFERENCES users (user_id) ON DELETE CASCADE,
@@ -143,8 +122,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 
 CREATE INDEX IF NOT EXISTS idx_notifications_run ON notifications (match_run_id);
 
--- ---------- 10. STAGE-1 FUNNEL (the SQL pre-filter) as a view ----------
--- n8n/Workflow B consumes this with one SELECT; nothing else computes eligibility.
+-- Stage 1 Funnel: SQL set-based pre-filter view consumed by Workflow B
 CREATE OR REPLACE VIEW eligible_pairs AS
 SELECT
     u.user_id,
