@@ -1,7 +1,7 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["ingest/tests"]
-asyncio_default_fixture_loop_scope = "function"
+markers = ["integration: needs a running PostgreSQL (docker compose up)"]
 
 [tool.ruff]
 line-length = 100
