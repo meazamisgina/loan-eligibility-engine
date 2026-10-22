@@ -1,0 +1,123 @@
+service: loan-eligibility-engine
+frameworkVersion: "3"
+
+provider:
+  name: aws
+  runtime: python3.12
+  architecture: arm64
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
+  memorySize: 512
+  timeout: 60
+  environment:
+    DATABASE_URL: ${env:DATABASE_URL, 'postgresql://app:change-me@rds-host:5432/loan_engine'}
+    MATCH_WEBHOOK_URL: ${env:MATCH_WEBHOOK_URL, 'https://n8n.example.com/webhook/match-run'}
+    UPLOAD_DIR: /tmp
+  vpc:
+    securityGroupIds:
+      - ${env:LAMBDA_SG_ID, 'sg-00000000000000000'}
+    subnetIds:
+      - ${env:PRIVATE_SUBNET_ID, 'subnet-00000000000000000'}
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action: [s3:GetObject]
+          Resource: !Sub "${UploadsBucket.Arn}/*"
+        - Effect: Allow
+          Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes]
+          Resource: !GetAtt IngestQueue.Arn
+        - Effect: Allow
+          Action: [ses:SendEmail, ses:SendRawEmail]
+          Resource: "*"
+
+functions:
+  ingest:
+    handler: ingest/handler.lambda_handler
+    events:
+      - sqs:
+          arn: !GetAtt IngestQueue.Arn
+          batchSize: 1           
+          maximumBatchingWindow: 5
+
+package:
+  patterns:
+    - "!**"
+    - "ingest/**"
+    - "!ingest/tests/**"
+    - "!**/__pycache__/**"
+    - "!**/*.pyc"
+
+resources:
+  Resources:
+    UploadsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: loan-engine-uploads-${self:provider.stage}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        LifecycleConfiguration:
+          Rules:
+            - Id: expire-old-uploads
+              Status: Enabled
+              ExpirationInDays: 30
+        NotificationConfiguration:
+          QueueConfigurations:
+            - Event: s3:ObjectCreated:*
+              Queue: !GetAtt IngestQueue.Arn
+
+    UploadsBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref UploadsBucket
+        PolicyDocument:
+          Statement:
+            - Sid: HttpsOnly
+              Effect: Deny
+              Principal: "*"
+              Action: "s3:*"
+              Resource:
+                - !Sub "${UploadsBucket.Arn}"
+                - !Sub "${UploadsBucket.Arn}/*"
+              Condition:
+                Bool:
+                  aws:SecureTransport: "false"
+
+    IngestQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: loan-engine-ingest-${self:provider.stage}
+        VisibilityTimeout: 120         
+        MessageRetentionPeriod: 1209600 
+
+    IngestQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref IngestQueue
+        PolicyDocument:
+          Statement:
+            - Sid: AllowS3SendMessage
+              Effect: Allow
+              Principal:
+                Service: s3.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt IngestQueue.Arn
+              Condition:
+                ArnLike:
+                  aws:SourceArn: !Sub "${UploadsBucket.Arn}"
+
+  Outputs:
+    UploadsBucketName:
+      Value: !Ref UploadsBucket
+    IngestQueueUrl:
+      Value: !Ref IngestQueue
+    IngestFunctionArn:
+      Value: !GetAtt IngestLambdaFunction.Arn
