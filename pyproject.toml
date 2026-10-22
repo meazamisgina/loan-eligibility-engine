@@ -1,6 +1,6 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
-testpaths = ["ingest/tests"]
+testpaths = ["ingest/tests", "api/tests"]
 markers = ["integration: needs a running PostgreSQL (docker compose up)"]
 
 [tool.ruff]

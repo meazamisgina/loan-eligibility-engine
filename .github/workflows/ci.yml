@@ -38,9 +38,9 @@ jobs:
       - name: Load schema
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f infrastructure/sql/schema.sql
       - name: Lint (ruff)
-        run: ruff check ingest/
+        run: ruff check ingest/ api/
       - name: Tests (pytest, incl. integration)
-        run: pytest ingest/tests -q
+        run: pytest ingest/tests api/tests -q
 
   validate-compose:
     runs-on: ubuntu-latest
