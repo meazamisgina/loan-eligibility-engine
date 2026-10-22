@@ -5,11 +5,11 @@ setlocal
 if exist .venv\Scripts\python.exe (set PY=.venv\Scripts\python) else (set PY=py)
 
 echo === 1/3 Lint (ruff) ===
-%PY% -m ruff check ingest\
+%PY% -m ruff check ingest\ api\
 if errorlevel 1 goto :fail
 
 echo === 2/3 Tests (pytest) ===
-%PY% -m pytest ingest/tests -q
+%PY% -m pytest ingest/tests api/tests -q
 if errorlevel 1 goto :fail
 
 echo === 3/3 docker-compose validation ===
