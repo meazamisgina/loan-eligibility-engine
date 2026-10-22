@@ -35,11 +35,12 @@ CSV upload ─→ validate & upsert ─→ PostgreSQL ─→ Workflow B (matchin
 
 | 1. Borrower Ingestion UI (`:8000`) | 2. Matching Funnel Accounting |
 |---|---|
-| [docs/screenshots/ui-report.png] | [docs/screenshots/funnel.png] |
+| ![Borrower Ingestion UI](docs/screenshots/ui-report.png) | ![Matching Funnel](docs/screenshots/funnel.png) |
 
 | 3. n8n Automation Engine (`:5678`) | 4. Delivered Notifications (`:8025`) |
 |---|---|
-| [docs/screenshots/n8n-workflows.png] | [docs/screenshots/mailpit-email.png] |
+| ![n8n Workflows](docs/screenshots/n8n-workflows.png) | ![Notification Email](docs/screenshots/mailpit-email.png) |
+
 ## Quick start
 
 **Prerequisites:** Docker Desktop (WSL2 backend), Python 3.12, Git.
