@@ -1,5 +1,6 @@
 -r requirements.txt
--r ../api/requirements.txtboto3>=1.34
+-r ../api/requirements.txt
+boto3>=1.34
 httpx>=0.27
 pytest>=8
 ruff>=0.6

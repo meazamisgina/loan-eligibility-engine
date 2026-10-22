@@ -1,18 +1,22 @@
 @echo off
-REM Local pre-push check: mirrors .github/workflows/ci.yml
+REM Local pre-push check: mirrors .github/workflows/ci.yml step for step
 setlocal
 
 if exist .venv\Scripts\python.exe (set PY=.venv\Scripts\python) else (set PY=py)
 
-echo === 1/3 Lint (ruff) ===
+echo === 1/4 Install dependencies (mirrors CI) ===
+%PY% -m pip install -r ingest\requirements-dev.txt -q
+if errorlevel 1 goto :fail
+
+echo === 2/4 Lint (ruff) ===
 %PY% -m ruff check ingest\ api\
 if errorlevel 1 goto :fail
 
-echo === 2/3 Tests (pytest) ===
+echo === 3/4 Tests (pytest) ===
 %PY% -m pytest ingest/tests api/tests -q
 if errorlevel 1 goto :fail
 
-echo === 3/3 docker-compose validation ===
+echo === 4/4 docker-compose validation ===
 if exist docker-compose.yml (
     docker compose -f docker-compose.yml config --quiet
     if errorlevel 1 goto :fail
