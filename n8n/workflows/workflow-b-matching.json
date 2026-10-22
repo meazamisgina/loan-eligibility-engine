@@ -1,0 +1,274 @@
+{
+  "name": "Workflow B - User Loan Matching",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "f2697702-00f1-4b36-85ea-870edc66325f",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "match-run",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "378e82c2-9353-4abb-a80a-fb2accf66091",
+      "name": "Webhook",
+      "webhookId": "ce47d2cc-cbe8-4189-9cac-40deee5d7fc7"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO match_runs (status, note) \nVALUES ('running', 'pipeline run') \nRETURNING match_run_id;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        368,
+        144
+      ],
+      "id": "9b783a04-f6ac-4703-8ac8-d002e34a4759",
+      "name": "Start match_run",
+      "credentials": {
+        "postgres": {
+          "id": "YKhXnFMjmS0Rqh8U",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  (SELECT count(*) FROM users) * (SELECT count(*) FROM loan_products) AS pairs_before_filter,\n  (SELECT count(*) FROM eligible_pairs) AS pairs_after_sql;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        592,
+        144
+      ],
+      "id": "d62d32c6-99e6-431a-aafa-5d469ce1ce87",
+      "name": "Funnel Metrics",
+      "credentials": {
+        "postgres": {
+          "id": "YKhXnFMjmS0Rqh8U",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  ep.user_id,\n  jsonb_agg(\n    jsonb_build_object(\n      'product_id', ep.product_id,\n      'product_name', lp.product_name,\n      'interest_rate', lp.interest_rate\n    ) ORDER BY lp.interest_rate ASC NULLS LAST, ep.product_id ASC\n  ) AS products\nFROM eligible_pairs ep\nJOIN loan_products lp ON ep.product_id = lp.product_id\nGROUP BY ep.user_id;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        816,
+        144
+      ],
+      "id": "22f46974-0117-4a52-b14b-3f289e63246a",
+      "name": "Fetch Eligible Pairs",
+      "credentials": {
+        "postgres": {
+          "id": "YKhXnFMjmS0Rqh8U",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const runId = $('Start match_run').item.json.match_run_id;\nconst items = $input.all();\n\nconst esc = (v) => `'${String(v).replace(/'/g, \"''\")}'`;\n\nconst rows = [];\nfor (const item of items) {\n  const userId = item.json.user_id;\n  const products = Array.isArray(item.json.products) ? item.json.products : [];\n  \n  // Cap at top 5 lowest-interest-rate loans per user\n  const topProducts = products.slice(0, 5);\n  \n  topProducts.forEach((p) => {\n    const reasonCodes = \"ARRAY['income_ok','credit_ok','employment_ok','age_ok']::text[]\";\n    const reasonText = `'Eligible based on income, credit score, age, and employment criteria'`;\n    \n    rows.push(`(${esc(userId)}, ${esc(p.product_id)}, ${esc(runId)}, ${reasonCodes}, ${reasonText})`);\n  });\n}\n\nif (rows.length === 0) {\n  return [{ json: { upsert_sql: 'SELECT 1;' } }];\n}\n\n// Chunk into batches of 2,000 rows for lightning-fast database insertion\nconst chunkSize = 2000;\nconst chunks = [];\nfor (let i = 0; i < rows.length; i += chunkSize) {\n  const chunkRows = rows.slice(i, i + chunkSize);\n  const sql = `\n    INSERT INTO matches (user_id, product_id, match_run_id, reason_codes, reason_text)\n    VALUES ${chunkRows.join(',\\n')}\n    ON CONFLICT (user_id, product_id, match_run_id) DO NOTHING;\n  `;\n  chunks.push({ json: { upsert_sql: sql } });\n}\n\nreturn chunks;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        144
+      ],
+      "id": "3ab861e8-6810-442a-b0be-2c2f2d111f46",
+      "name": "Stage 2 Rules"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.upsert_sql }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1264,
+        144
+      ],
+      "id": "09396e44-f70b-4285-93d5-a80f61c0e163",
+      "name": "Insert Matches",
+      "credentials": {
+        "postgres": {
+          "id": "YKhXnFMjmS0Rqh8U",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE match_runs\nSET \n  status = 'completed',\n  finished_at = now(),\n  users_processed = (SELECT count(DISTINCT user_id) FROM matches WHERE match_run_id = '{{ $('Start match_run').first().json.match_run_id }}'),\n  pairs_before_filter = {{ $('Funnel Metrics').first().json.pairs_before_filter }},\n  pairs_after_sql = {{ $('Funnel Metrics').first().json.pairs_after_sql }},\n  pairs_after_rules = (SELECT count(*) FROM matches WHERE match_run_id = '{{ $('Start match_run').first().json.match_run_id }}'),\n  llm_calls_made = 0\nWHERE match_run_id = '{{ $('Start match_run').first().json.match_run_id }}';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1488,
+        144
+      ],
+      "id": "71fb002c-e8d7-4ca5-9525-47a6470d32f7",
+      "name": "Finalize match_run",
+      "credentials": {
+        "postgres": {
+          "id": "YKhXnFMjmS0Rqh8U",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/notify",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"match_run_id\": \"{{ $('Start match_run').first().json.match_run_id }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1680,
+        160
+      ],
+      "id": "90178408-8c5d-4985-bd4b-aea1a7693b12",
+      "name": "Notify Workflow C",
+      "executeOnce": true,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Start match_run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start match_run": {
+      "main": [
+        [
+          {
+            "node": "Funnel Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Funnel Metrics": {
+      "main": [
+        [
+          {
+            "node": "Fetch Eligible Pairs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Eligible Pairs": {
+      "main": [
+        [
+          {
+            "node": "Stage 2 Rules",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stage 2 Rules": {
+      "main": [
+        [
+          {
+            "node": "Insert Matches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Matches": {
+      "main": [
+        [
+          {
+            "node": "Finalize match_run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize match_run": {
+      "main": [
+        [
+          {
+            "node": "Notify Workflow C",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Start match_run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "946c15f2-0afb-4d4b-a0fb-66bda0b26bfc",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b42c7264eebd105eb9206d197d25e9a76b5c21ff7a7b118ccfa507fef587a550"
+  },
+  "nodeGroups": [],
+  "id": "uIruIhMx58Ka7tj9",
+  "tags": []
+}
