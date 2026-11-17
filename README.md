@@ -2,10 +2,10 @@
 
 An automated pipeline that **ingests** user CSV data, **discovers** personal loan
 products from public websites, **matches** users to eligible products with
-deterministic SQL, and **notifies** them — orchestrated entirely through
+deterministic SQL, and **notifies** them - orchestrated entirely through
 self-hosted [n8n](https://n8n.io) workflows, backed by PostgreSQL.
 
-> **One CSV in — eligibility out.** No black boxes: every decision is recorded,
+> **One CSV in - eligibility out.** No black boxes: every decision is recorded,
 > every funnel stage is measured, and eligibility requires **zero LLM calls**.
 
 ## Table of contents
@@ -13,13 +13,12 @@ self-hosted [n8n](https://n8n.io) workflows, backed by PostgreSQL.
 - [Live Pipeline in Action](#live-pipeline-in-action)
 - [Quick start](#quick-start)
 - [The pipeline](#the-pipeline)
-- [The Optimization Treasure Hunt](#the-optimization-treasure-hunt)
+- [Cost & Performance Optimization](#cost--performance-optimization)
 - [Design decisions](#design-decisions)
 - [Configuring credentials in n8n](#configuring-credentials-in-n8n)
 - [Testing & CI](#testing--ci)
 - [AWS deployment](#aws-deployment)
 - [Project structure](#project-structure)
-- [Deliverables checklist](#deliverables-checklist)
 
 ## Architecture
 
@@ -28,7 +27,7 @@ Full documentation with system diagrams: **[docs/architecture.md](docs/architect
 ```
 CSV upload ─→ validate & upsert ─→ PostgreSQL ─→ Workflow B (matching) ─→ Workflow C (email)
                                      ↑                    │
-              Workflow A (daily crawler: SBI / Axis / Kotak)
+              Workflow A (daily crawler: public lender product pages)
 ```
 
 ## Live Pipeline in Action
@@ -76,11 +75,11 @@ Import the three workflows from `n8n/workflows/` into n8n (**http://localhost:56
 | Stage | Workflow | Trigger | What it does |
 |---|---|---|---|
 | **Ingest** | `ingest/` + API | CSV upload | Parse $\rightarrow$ validate $\rightarrow$ quarantine bad rows $\rightarrow$ idempotent upsert into `users` (one transaction per file, full audit in `ingestion_batches`) |
-| **Discover** | **Workflow A** | Daily cron (02:00 UTC) | Crawl SBI / Axis / Kotak product pages $\rightarrow$ LLM extraction with layered prompt-injection defense $\rightarrow$ upsert into `loan_products` (`crawl_runs` accounting) |
+| **Discover** | **Workflow A** | Daily cron (02:00 UTC) | Crawl public lender product pages $\rightarrow$ LLM extraction with layered prompt-injection defense $\rightarrow$ upsert into `loan_products` (`crawl_runs` accounting) |
 | **Match** | **Workflow B** | Webhook after ingest | SQL pre-filter (`eligible_pairs`) $\rightarrow$ rank by interest rate $\rightarrow$ cap 5 per user $\rightarrow$ `matches` with `reason_codes`; funnel measured in `match_runs` |
 | **Notify** | **Workflow C** | Webhook after match | Deterministic templated email $\rightarrow$ AWS SES (production) or SMTP $\rightarrow$ Mailpit (demo); recorded in `notifications` |
 
-## The Optimization Treasure Hunt
+## Cost & Performance Optimization
 
 Filtering thousands of users against dozens of products via an LLM is slow and expensive. This system eliminates that cost. Measured on the **10,000-row dataset**:
 
@@ -161,14 +160,3 @@ npx serverless@3 print
 ├── docker-compose.yml      # Postgres + n8n + Mailpit stack
 └── scripts/check.bat       # Pre-push validation script
 ```
-
-## Deliverables checklist
-
-- [x] GitHub repository with all source code and configuration
-- [x] `serverless.yml` — AWS resources as code
-- [x] `docker-compose.yml` — Self-hosted n8n stack
-- [x] JSON exports for all three n8n workflows
-- [x] Architecture diagrams + README
-- [x] Design decisions (ADR-001 … ADR-011), including Optimization Treasure Hunt
-- [x] Step-by-step setup and credential configuration
-- [ ] Demonstration video (5–10 min)
